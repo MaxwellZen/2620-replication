@@ -6,7 +6,7 @@ Once again, we started working through a Google Doc which can be viewed [here](h
 
 ### General Structure
 
-All possible server hosts and ports are listed in the `ips.config` file, which is not on the GitHub repo but is created locally. The vision is to have multiple servers, with "child" servers deferring to a "lead" server. Clients will all be connected to the lead server, and the lead server will propagate any changes (accounts being created and deleted, messages being sent and deleted) to the other servers. This way, if a child server disconnects, there are no issues. However, if the lead server disconnects, the child servers must determine which server is the new lead server and then defer to them for updates. Clients will search for the new lead server to reconnect and resume normal activity. In order to detect when the lead server has disconnected, the child servers will send "marco" queries to the lead server, which the lead server must respond to with "polo" in order to confirm that it is still alive -- this functions as a heartbeat check.
+All possible server hosts and ports are listed in the `ips.config` file, which is not on the GitHub repo but is created locally. The vision is to have multiple servers, with "child" servers deferring to a "lead" server. Clients will all be connected to the lead server, and the lead server will propagate any changes (accounts being created and deleted, messages being sent and deleted) to the other servers. This way, if a child server disconnects, there are no issues. However, if the lead server disconnects, the child servers must determine which server is the new lead server and then defer to them for updates. Clients will search for the new lead server to reconnect and resume normal activity. In order to detect when the lead server has disconnected, the child servers will send "marco" queries to the lead server, which the lead server must respond to with "polo" in order to confirm that it is still alive -- this functions as a heartbeat check. Additionally, child servers send "heart" queries to each other, but this query doesn't have a response (otherwise there's the possibility of a deadlock happening if two servers send a "heart" check to each other and wait for the other's response).
 
 ### Client Side
 
@@ -65,6 +65,9 @@ Additionally, we created new commands to facilitate communication between proces
     - params: N/A
     - response: "polo"
     - if non-leader receives marco: become leader
+- "heart": check if a child server is slive
+    - params: N/A
+    - response: N/A
 
 Finally, if the lead server crashes and the children must decide who the new leader is, I created a pretty primitive scheme of just picking the server with the minimum value of (host, port).
 

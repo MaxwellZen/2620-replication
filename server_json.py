@@ -335,7 +335,7 @@ def handle_command(request, data):
         case "marco":
             return marco()
         case "heart":
-            return {"status": "beat"}
+            return
         case _:
             return {"status": "error", "message": "invalid command"}
 
@@ -360,12 +360,16 @@ def service_connection(key, mask):
         print("key:", key)
         print("type(key.fileobj):", type(key.fileobj))
     data = key.data
-
+    
     if mask & selectors.EVENT_READ:
         try:
             recv_data = sock.recv(1024)
             if recv_data:
-                data.outb += recv_data
+                request = json.loads(recv_data.decode("utf-8"))
+                response = handle_command(request, data)
+                print("response:", response)
+                if response is not None:
+                    data.inb += json.dumps(response).encode("utf-8")
             else:
                 print(f"Closing connection to {data.addr}")
                 sel.unregister(sock)
@@ -375,13 +379,10 @@ def service_connection(key, mask):
             sel.unregister(sock)
             sock.close()
     if mask & selectors.EVENT_WRITE:
-        if data.outb:
-            request = json.loads(data.outb.decode("utf-8"))
-            response = handle_command(request, data)
-            print("response:", response)
-            response = json.dumps(response).encode("utf-8")
-            sent = sock.send(response)
-            data.outb = b""
+        if data.inb:
+            sent = sock.send(data.inb)
+            print("sent:", sent)
+            data.inb = b""
 
 def main():
     global self_host, users, users_file, server_hosts, server_sockets, leader_socket, leader_host, is_leader
@@ -463,11 +464,29 @@ def main():
             # if a second has passed since the last marco-polo check, run another
             if not is_leader and time.time() - last_check > 1:
                 last_check = time.time()
+                new_sockets = []
+                new_hosts = []
+                for i in range(len(server_sockets)):
+                    try:
+                        sock = server_sockets[i]
+                        send_request(sock, {"command": "heart"}, False)
+                        new_sockets.append(server_sockets[i])
+                        new_hosts.append(server_hosts[i])
+                    except:
+                        continue
+                server_sockets = new_sockets 
+                server_hosts = new_hosts
+                print("server_hosts", server_hosts)
+
                 try:
                     send_request(leader_socket, {"command": "marco"})
                 except:
                     # if the leader is gone, decide on the new leader
-                    server_hosts.remove(leader_host)
+                    # server_hosts.remove(leader_host)
+                    if leader_host in server_hosts:
+                        index = server_hosts.index(leader_host)
+                        server_hosts.pop(index)
+                        server_sockets.pop(index)
                     leader_socket = None 
                     leader_host = None
                     if len(server_hosts) == 0 or self_host < min(server_hosts):

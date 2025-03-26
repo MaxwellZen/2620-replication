@@ -46,3 +46,15 @@ we had more time, we would implement the persistent store as a
 SQL database in order to ensure that updates can be efficiently 
 carried out in a way that doesn't necessitate rewriting the 
 entire persistent store.
+
+3/26
+___
+
+Realized that our original approach is flawed because child 
+servers cannot properly elect a new leader if they do not update 
+their view of which servers are still alive - therefore, every 
+second there also needs to be a heartbeat check done to other 
+child servers. However, since this allows for two-way 
+communication, it's important that this check does not require 
+any response, so after this is sent the receiving server simply 
+ignores it.
