@@ -211,9 +211,18 @@ def new_delete(username, IDs):
 
     return {"status": "success"}
 
+def new_delete_acct(username):
+    users.pop(username)
+
+    with open(users_file, 'w') as file:
+        json.dump(users, file)
+
+    return {"status": "success"}
+
 def marco():
-    global leader_socket, leader_host
+    global leader_socket, leader_host, is_leader
     if not is_leader:
+        print("becoming leader:")
         is_leader = True 
         leader_socket = None 
         leader_host = self_host 
@@ -228,7 +237,7 @@ def propagate_change(request):
 
     new_sockets = []
     new_hosts = []
-    for i in range(len(server_sockets)):
+    for i in range(len(server_hosts)):
         try:
             name = server_hosts[i]
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -289,6 +298,8 @@ def handle_command(request, sock, data):
             return new_msg(request.get('username'), request.get('recipient'), request.get('message'), request.get('id'))
         case "new_delete":
             return new_delete(request.get('username'), request.get('ids'))
+        case "new_delete_acct":
+            return new_delete_acct(request.get('username'))
         case "marco":
             return marco()
         case "heart":
@@ -394,12 +405,31 @@ def main():
     sel.register(lsock, selectors.EVENT_READ, data=None)
     try:
         while True:
-            events = sel.select(timeout=None)
+            events = sel.select(timeout=1)
             for key, mask in events:
                 if key.data is None:
                     accept_wrapper(key.fileobj)
                 else:
                     service_connection(key, mask)
+            
+            if not is_leader:
+                try:
+                    send_request(leader_socket, {"command": "marco"})
+                except:
+                    server_hosts.remove(leader_host)
+                    leader_socket = None 
+                    leader_host = None
+                    if len(server_hosts) == 0 or self_host < min(server_hosts):
+                        is_leader = True 
+                        leader_host = self_host 
+                        print("becoming leader:")
+                    else:
+                        is_leader = False
+                        leader_host = min(server_hosts)
+                        leader_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        leader_socket.connect(leader_host)
+                        send_request(leader_socket, {"command": "marco"})
+
     except KeyboardInterrupt:
         print("Caught keyboard interrupt, exiting")
     finally:
