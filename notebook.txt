@@ -1,0 +1,48 @@
+3/25
+____
+
+Note: Again, most of the important stuff is in the README, and we 
+are just including this notebook entry for completeness.
+
+For this project, we added to our chat application to facilitate 
+the existence of multiple servers backing up the same persistent 
+memory. While it is possible to have different clients 
+interacting with different instances of the server, which would 
+ensure efficiency as the client load is spread across multiple 
+processes, this system is much harder to implement. Instead, we 
+chose to have all clients connect to a single leading server and 
+have the rest of the servers just serve as a backup hard drive. 
+The system we used to establish a lead server and support the 
+lead server crashing is covered in the README.
+
+One issue we ran into when using this protocol came with two-way 
+communication leading to deadlock. On one hand, the child servers 
+need to perform heartbeat checks on the lead server to ensure 
+that it is still alive. On the other hand, the lead server needs 
+to propagate changes to the child servers. So we ran into an 
+issue where the child server sends a heartbeat check and waits 
+for a response, and at the same time the lead server is 
+propagating changes and waiting for a response. The solution we 
+found is that the lead server does not actually need to wait for 
+a response from child servers when propagating changes. If we 
+send the notification to propagate changes and then immediately 
+move on, this allows the lead server to respond to the child 
+server's request for a heartbeat check.
+
+There are a lot of things we could improve about our 
+implementation. For example, we are not fully confident that one 
+server crashing will not affect other servers, because we ran 
+into issues where one server terminating would lead to a socket 
+error in another server. We put as many socket operations into a 
+try-except block as we could in order to catch these issues and 
+handle them gracefully, but our knowledge of Python socket 
+methods is not deep enought to be confident that we caught all 
+places where an error could happen. Also, our implementation of 
+the persistent store is extremely inefficient because we didn't 
+want to go through the effort of starting a SQL database, and so 
+we instead chose to just write the entire users database to a 
+json file every time it gets updated. If performance mattered and 
+we had more time, we would implement the persistent store as a 
+SQL database in order to ensure that updates can be efficiently 
+carried out in a way that doesn't necessitate rewriting the 
+entire persistent store.
