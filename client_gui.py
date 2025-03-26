@@ -115,6 +115,7 @@ class ChatApp:
 
     # finds and connects to leading server
     def connect(self):
+        # open up list of hosts
         servers = []
         with open('ips.config', 'r') as file:
             servers = json.load(file)
@@ -122,12 +123,17 @@ class ChatApp:
         while True:
             for host, port in servers:
                 try:
+                    # try connecting to host
                     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                     print("trying", (host,port))
                     sock.connect((host, port))
+
+                    # ask if host is the leader
                     message = json.dumps({"command": "ask_lead"}).encode('utf-8')
                     sock.sendall(message)
                     data = json.loads(sock.recv(1024).decode('utf-8'))
+
+                    # return if leader is found, else connect to the leader
                     if data['leader'] == 'True':
                         self.sock = sock
                         return 
@@ -147,21 +153,32 @@ class ChatApp:
                     exc_type, exc_obj, tb = sys.exc_info()
                     line_number = tb.tb_lineno
                     print("Line number:", line_number)
+
+            # waits half a second is no servers are open (arbitrary number, meant to prevent spam looping)
             print("waiting for server...")
-            time.sleep(1)
+            time.sleep(0.5)
     
     # wrapper for sending request and reconnecting if leader is disconnected
     def send_request(self, request):
         while True:
             try:
+                # try sending request to server
                 message = json.dumps(request).encode('utf-8')
                 self.sock.sendall(message)
                 data = json.loads(self.sock.recv(1024).decode('utf-8'))
                 return data
             except:
+                # if server is down, connect to a new server
                 self.connect()
+
                 if self.username != None and self.password != None:
+                    # login if originally logged in
                     message = json.dumps({"command": "login", "username": self.username, "password": self.password}).encode('utf-8')
+                    self.sock.sendall(message)
+                    data = json.loads(self.sock.recv(1024).decode('utf-8'))
+                elif self.username != None:
+                    # create account if currently supplying password
+                    message = json.dumps({"command": "create_account", "username": self.username}).encode('utf-8')
                     self.sock.sendall(message)
                     data = json.loads(self.sock.recv(1024).decode('utf-8'))
 
@@ -243,6 +260,7 @@ class ChatApp:
         self.create_pass_back_button.pack()
     
     def close_create_pass(self):
+        self.username = None
         self.create_pass_label.pack_forget()
         self.password_entry.pack_forget()
         self.password_entry.delete(0,'end')
