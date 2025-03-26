@@ -4,11 +4,33 @@ import types
 import json
 from fnmatch import fnmatch
 import sys
+import os
+import hashlib
 
 sel = selectors.DefaultSelector()
+self_host = None
 
 # dictionary to store user info
 users = {}
+users_file = None
+
+server_sockets = []
+server_hosts = []
+
+leader_socket = None 
+leader_host = None
+is_leader = False
+
+def stable_hash(s):
+    return hashlib.sha256(s.encode()).hexdigest()
+
+def send_request(sock, request):
+    print("sending request", request)
+    message = json.dumps(request).encode('utf-8')
+    sock.sendall(message)
+    data = json.loads(sock.recv(1024).decode('utf-8'))
+    print("received:", data)
+    return data
 
 def create_account(username, data):
     """
@@ -31,8 +53,11 @@ def supply_pass(password, data):
     if data.logged_in:
         return {"status": "error", "message": f"already logged into account {data.username}"}
     if data.supplying_pass:
-        users.update({data.username: [hash(password), []]})
+        users.update({data.username: [stable_hash(password), []]})
         data.supplying_pass = False
+
+        propagate_change({"command": "new_acct", "username": data.username, "password": password})
+
         return {"status": "success", "message": "account created. please login with your new account"}
     return {"status": "error", "message": "should not be supplying password"}
 
@@ -43,7 +68,7 @@ def login(username, password, data):
     if data.logged_in:
         return {"status": "error", "message": f"already logged into account {data.username}"}
     if username in users:
-        if hash(password) == users[username][0]:
+        if stable_hash(password) == users[username][0]:
             data.username = username
             data.logged_in = True
             return {"status": "success", "message": "logged in"}
@@ -73,6 +98,9 @@ def send(recipient, message, data):
     for msg in messages:
         id = max(id, int(msg[1]))
     users[recipient][1].append([data.username, str(id + 1), False, message])
+
+    propagate_change({"command": "new_msg", "username": data.username, "recipient": recipient, "message": message, "id": str(id + 1)})
+
     return {"status": "success", "message": "message sent"}
 
 def read(count, data):
@@ -104,6 +132,9 @@ def delete_msg(IDs, data):
     # users[data.username] = (users[data.username][0], updated_messages)
     updated_messages = [msg for msg in messages if msg[1] not in IDs]
     users[data.username][1] = updated_messages
+
+    propagate_change({"command": "new_delete", "username": data.username, "ids": IDs})
+
     return {"status": "success", "message": "messages deleted"}
 
 def delete_account(data):
@@ -135,11 +166,95 @@ def num_msg(data):
         return "ERROR: not logged in"
     return {"status": "success", "message": str(len(users[data.username][1]))}
 
-def handle_command(request, data):
+def ask_lead():
+    """
+    Returns whether or not the current server is the leader, as well as the host and port of the current leader
+    """
+    return {"status": "success", "leader": ("True" if is_leader else "False"), "lead_host": leader_host[0], "lead_port": leader_host[1]}
+
+def server_login(sock, host, port):
+    """
+    Facilitates addition of new server
+    """
+    print(f"server login from {(host, port)}")
+    server_sockets.append(sock)
+    server_hosts.append((host, port))
+    return {"status": "success", "leader": ("True" if is_leader else "False")}
+
+def full_update():
+    return {"status": "success", "users": users}
+
+def new_acct(username, password):
+    users.update({username: [stable_hash(password), []]})
+
+    with open(users_file, 'w') as file:
+        json.dump(users, file)
+
+    return {"status": "success"}
+
+def new_msg(username, recipient, message, id):
+    users[recipient][1].append([username, id, False, message])
+    
+    with open(users_file, 'w') as file:
+        json.dump(users, file)
+
+    return {"status": "success"}
+
+def new_delete(username, IDs):
+    messages = users[username][1]
+    
+    updated_messages = [msg for msg in messages if msg[1] not in IDs]
+    users[username][1] = updated_messages
+    
+    with open(users_file, 'w') as file:
+        json.dump(users, file)
+
+    return {"status": "success"}
+
+def marco():
+    global leader_socket, leader_host
+    if not is_leader:
+        is_leader = True 
+        leader_socket = None 
+        leader_host = self_host 
+    return {"status": "polo"}
+
+def propagate_change(request):
+    global users, users_file, server_sockets, server_hosts
+    print("propagating change", request)
+
+    with open(users_file, 'w') as file:
+        json.dump(users, file)
+
+    new_sockets = []
+    new_hosts = []
+    for i in range(len(server_sockets)):
+        try:
+            name = server_hosts[i]
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.connect(name)
+            data = send_request(sock, {"command": "heart"})
+            # new_sockets.append(server_sockets[i])
+            new_hosts.append(server_hosts[i])
+        except:
+            continue 
+    # server_sockets = new_sockets 
+    server_hosts = new_hosts 
+    for name in server_hosts:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.connect(name)
+        data = send_request(sock, request)
+
+def handle_command(request, sock, data):
     """
     Handles incoming commands from the client.
     """
+    print(request)
     command = request.get("command")
+
+    if not is_leader and command in ["create_account", "supply_pass", "login", "list_accounts", "send", "read", "delete_msg", "delete_account", "logout", "num_msg"]:
+        return {"status": "ERROR: not leading server", "lead_host": leader_host[0], "lead_post": leader_host[1]}
+    
     match command:
         case "create_account":
             return create_account(request.get("username"), data)
@@ -162,6 +277,22 @@ def handle_command(request, data):
             return logout(data)
         case "num_msg":
             return num_msg(data)
+        case "ask_lead":
+            return ask_lead()
+        case "server_login":
+            return server_login(sock, request.get('host'), request.get('port'))
+        case "full_update":
+            return full_update()
+        case "new_acct":
+            return new_acct(request.get('username'), request.get('password'))
+        case "new_msg":
+            return new_msg(request.get('username'), request.get('recipient'), request.get('message'), request.get('id'))
+        case "new_delete":
+            return new_delete(request.get('username'), request.get('ids'))
+        case "marco":
+            return marco()
+        case "heart":
+            return {"status": "beat"}
         case _:
             return {"status": "error", "message": "invalid command"}
 
@@ -180,37 +311,85 @@ def service_connection(key, mask):
     """
     Services existing connections and reads/writes to the connected socket
     """
-    sock = key.fileobj
+    try:
+        sock = key.fileobj
+    except:
+        print("key:", key)
+        print("type(key.fileobj):", type(key.fileobj))
     data = key.data
+
     if mask & selectors.EVENT_READ:
         recv_data = sock.recv(1024)
         if recv_data:
-            request = json.loads(recv_data.decode("utf-8"))
-            response = handle_command(request, data)
-            data.outb += json.dumps(response).encode("utf-8")
+            data.outb += recv_data
         else:
             print(f"Closing connection to {data.addr}")
             sel.unregister(sock)
             sock.close()
     if mask & selectors.EVENT_WRITE:
         if data.outb:
-            sent = sock.send(data.outb)
-            data.outb = data.outb[sent:]
+            request = json.loads(data.outb.decode("utf-8"))
+            response = handle_command(request, sock, data)
+            print("response:", response)
+            response = json.dumps(response).encode("utf-8")
+            sent = sock.send(response)
+            data.outb = b""
 
 def main():
+    global self_host, users, users_file, server_hosts, server_sockets, leader_socket, leader_host, is_leader
     # grabs host and port from command-line arguments
-    if len(sys.argv) < 3 or not sys.argv[2].isdigit():
-        print("Please provide a host and port for the socket connection")
-        print("Example: python3 client_gui.py 127.0.0.1 54400")
+    if len(sys.argv) < 4 or not sys.argv[2].isdigit():
+        print("Please provide a host and port and file for the socket connection")
+        print("Example: python3 client_gui.py 127.0.0.1 54400 1")
         return
 
     host = sys.argv[1]
     port = int(sys.argv[2])
+    self_host = (host, port)
+    users_file = "users" + sys.argv[3] + ".json"
 
     lsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     lsock.bind((host, port))
     lsock.listen()
     print("Listening on", (host, port))
+
+    servers = []
+    with open('ips.config', 'r') as file:
+        servers = json.load(file)
+
+    for (host2, port2) in servers:
+        if host2 == host and port2 == port:
+            continue 
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.connect((host2, port2))
+            server_sockets.append(sock)
+            server_hosts.append((host2, port2))
+
+            data = send_request(sock, {"command": "server_login", "host": host, "port": port})
+            if data['leader'] == 'True':
+                leader_socket = sock 
+                leader_host = (host2,port2)
+        except:
+            continue
+
+    if len(server_sockets) == 0:
+        print("becoming leader:")
+        is_leader = True
+        leader_host = (host, port)
+        if os.path.exists(users_file):
+            with open(users_file, 'r') as file:
+                users = json.load(file)
+        else:
+            with open(users_file, 'w') as file:
+                json.dump(users, file)
+    else:
+        is_leader = False
+        data = send_request(leader_socket,{"command": "full_update"})
+        users = data['users']
+        with open(users_file, 'w') as file:
+            json.dump(users, file)
+
     lsock.setblocking(False)
     sel.register(lsock, selectors.EVENT_READ, data=None)
     try:

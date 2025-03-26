@@ -176,3 +176,4 @@ cython_debug/
 # my own
 idk.py
 ips.config
+*.json

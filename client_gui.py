@@ -7,6 +7,8 @@ from utils import encode_request, decode_request
 import emoji
 import sys
 import json
+import traceback
+import time
 
 USE_JSON = True
 
@@ -112,30 +114,40 @@ class ChatApp:
 
     # finds and connects to leading server
     def connect(self):
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
         servers = []
         with open('ips.config', 'r') as file:
             servers = json.load(file)
         
         while True:
-            for host,port in servers:
+            for host, port in servers:
                 try:
-                    self.sock.connect((host, port))
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    print("trying", (host,port))
+                    sock.connect((host, port))
                     message = json.dumps({"command": "ask_lead"}).encode('utf-8')
-                    self.sock.sendall(message)
-                    data = json.loads(self.sock.recv(1024).decode('utf-8'))
+                    sock.sendall(message)
+                    data = json.loads(sock.recv(1024).decode('utf-8'))
                     if data['leader'] == 'True':
+                        self.sock = sock
                         return 
                     else:
+                        sock.close()
                         lhost = data['lead_host']
                         lport = data['lead_port']
-                        self.sock.shutdown(socket.SHUT_RDWR)
-                        self.sock.close()
+                        print("connecting instead to", (lhost, lport))
+                        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                         self.sock.connect((lhost,lport))
+                        message = json.dumps({"command": "ask_lead"}).encode('utf-8')
+                        self.sock.sendall(message)
+                        data = json.loads(self.sock.recv(1024).decode('utf-8'))
                         return
-                except:
-                    continue
+                except Exception as e:
+                    print("Error:", e)
+                    exc_type, exc_obj, tb = sys.exc_info()
+                    line_number = tb.tb_lineno
+                    print("Line number:", line_number)
+            print("waiting for server...")
+            time.sleep(5)
     
     # wrapper for sending request and reconnecting if leader is disconnected
     def send_request(self, request):
