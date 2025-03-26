@@ -30,9 +30,9 @@ there to support the main loop.
 """
 
 class ChatApp:
-    def __init__(self, host, port, use_json):
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.connect((host, port))
+
+    def __init__(self, use_json):
+        self.connect()
         self.use_json = use_json
         
         # general information about user
@@ -109,6 +109,44 @@ class ChatApp:
         self.sendmsg_text = scrolledtext.ScrolledText(self.root, wrap=tk.WORD, width=40, height=8)
         self.sendmsg_sendbutton = Button(self.root, text = "Send Email", command = self.sendmsg)
         self.sendmsg_backbutton = Button(self.root, text = "Back", command = self.sendmsg_to_readmsg)
+
+    # finds and connects to leading server
+    def connect(self):
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+        servers = []
+        with open('ips.config', 'r') as file:
+            servers = json.load(file)
+        
+        while True:
+            for host,port in servers:
+                try:
+                    self.sock.connect((host, port))
+                    message = json.dumps({"command": "ask_lead"}).encode('utf-8')
+                    self.sock.sendall(message)
+                    data = json.loads(self.sock.recv(1024).decode('utf-8'))
+                    if data['leader'] == 'True':
+                        return 
+                    else:
+                        lhost = data['lead_host']
+                        lport = data['lead_port']
+                        self.sock.shutdown(socket.SHUT_RDWR)
+                        self.sock.close()
+                        self.sock.connect((lhost,lport))
+                        return
+                except:
+                    continue
+    
+    # wrapper for sending request and reconnecting if leader is disconnected
+    def send_request(self, request):
+        while True:
+            try:
+                message = json.dumps(request).encode('utf-8')
+                self.sock.sendall(message)
+                data = json.loads(self.sock.recv(1024).decode('utf-8'))
+                return data
+            except:
+                self.connect()
 
     # sets up greeting page and kicks off main loop
     def main_loop(self):
@@ -198,9 +236,7 @@ class ChatApp:
         # query number of messages
         if self.use_json:
             request = {"command": "num_msg"}
-            message = json.dumps(request).encode('utf-8')
-            self.sock.sendall(message)
-            data = json.loads(self.sock.recv(1024).decode('utf-8'))
+            data = self.send_request(request)
             self.num_msg = int(data['message'])
         else:
             message = "num_msg".encode('utf-8')
@@ -219,9 +255,7 @@ class ChatApp:
 
             if self.use_json:
                 request = {"command": "read", "count": str(upper_bound)}
-                message = json.dumps(request).encode('utf-8')
-                self.sock.sendall(message)
-                data = json.loads(self.sock.recv(1024).decode('utf-8'))
+                data = self.send_request(request)
                 args = [data['count']]
                 for msg in data['messages']:
                     args.extend([msg['sender'], msg['id'], msg['message']])
@@ -389,9 +423,7 @@ class ChatApp:
     def login_account(self):
         if self.use_json:
             request = {"command": "login", "username": self.username_entry.get(), "password": self.password_entry.get()}
-            message = json.dumps(request).encode('utf-8')
-            self.sock.sendall(message)
-            data = json.loads(self.sock.recv(1024).decode('utf-8'))
+            data = self.send_request(request)
             if data['status'] == 'success':
                 data = "SUCCESS: logged in"
             else:
@@ -420,9 +452,7 @@ class ChatApp:
     def create_new_user(self):
         if self.use_json:
             request = {"command": "create_account", "username": self.username_entry.get()}
-            message = json.dumps(request).encode('utf-8')
-            self.sock.sendall(message)
-            data = json.loads(self.sock.recv(1024).decode('utf-8'))
+            data = self.send_request(request)
             data = data['message']
         else:
             message = encode_request("create_account", [self.username_entry.get()])
@@ -444,9 +474,7 @@ class ChatApp:
     def create_new_pass(self):
         if self.use_json:
             request = {"command": "supply_pass", "password": self.password_entry.get()}
-            message = json.dumps(request).encode('utf-8')
-            self.sock.sendall(message)
-            data = json.loads(self.sock.recv(1024).decode('utf-8'))
+            data = self.send_request(request)
             if data['status'] == 'success':
                 data = "SUCCESS: account created. please login with your new account"
             else:
@@ -483,9 +511,7 @@ class ChatApp:
     def logout(self):
         if self.use_json:
             request = {"command": "logout"}
-            message = json.dumps(request).encode('utf-8')
-            self.sock.sendall(message)
-            data = json.loads(self.sock.recv(1024).decode('utf-8'))
+            data = self.send_request(request)
         else:
             message = "logout".encode('utf-8')
             self.sock.sendall(message)
@@ -505,9 +531,7 @@ class ChatApp:
     def deleteacct(self):
         if self.use_json:
             request = {"command": "delete_account"}
-            message = json.dumps(request).encode('utf-8')
-            self.sock.sendall(message)
-            data = json.loads(self.sock.recv(1024).decode('utf-8'))
+            data = self.send_request(request)
         else:
             message = "delete_account".encode('utf-8')
             self.sock.sendall(message)
@@ -527,9 +551,7 @@ class ChatApp:
     def deletemsg(self, msgid):
         if self.use_json:
             request = {"command": "delete_msg", "ids": [str(msgid)]}
-            message = json.dumps(request).encode('utf-8')
-            self.sock.sendall(message)
-            data = json.loads(self.sock.recv(1024).decode('utf-8'))
+            data = self.send_request(request)
         else:
             message = encode_request("delete_msg", [str(msgid)])
             message = message.encode("utf-8")
@@ -551,9 +573,7 @@ class ChatApp:
     def selectuser_fill_users(self):
         if self.use_json:
             request = {"command": "list_accounts", "pattern": self.selectuser_search_entry.get() + "*"}
-            message = json.dumps(request).encode('utf-8')
-            self.sock.sendall(message)
-            data = json.loads(self.sock.recv(1024).decode('utf-8'))
+            data = self.send_request(request)
             users = [str(data['count'])] + data['accounts']
         else:
             message = encode_request("list_accounts", [self.selectuser_search_entry.get() + "*"]).encode('utf-8')
@@ -637,9 +657,7 @@ class ChatApp:
     def sendmsg(self):
         if self.use_json:
             request = {"command": "send", "recipient": self.sendmsg_user, "message": self.sendmsg_text.get('1.0','end-1c')}
-            message = json.dumps(request).encode('utf-8')
-            self.sock.sendall(message)
-            data = json.loads(self.sock.recv(1024).decode('utf-8'))
+            data = self.send_request(request)
         else:
             message = encode_request("send", [self.sendmsg_user, self.sendmsg_text.get('1.0','end-1c')]).encode('utf-8')
             self.sock.sendall(message)
@@ -651,15 +669,15 @@ class ChatApp:
         self.root.update_idletasks()
 
 def main():
-    if len(sys.argv) < 3 or not sys.argv[2].isdigit():
-        print("Please provide a host and port for the socket connection")
-        print("Example: python3 client_gui.py 127.0.0.1 54400")
-        return
+    # if len(sys.argv) < 3 or not sys.argv[2].isdigit():
+    #     print("Please provide a host and port for the socket connection")
+    #     print("Example: python3 client_gui.py 127.0.0.1 54400")
+    #     return
 
-    host = sys.argv[1]
-    port = int(sys.argv[2])
+    # host = sys.argv[1]
+    # port = int(sys.argv[2])
 
-    chatapp = ChatApp(host, port, USE_JSON)
+    chatapp = ChatApp(USE_JSON)
     chatapp.main_loop()
 
 if __name__ == "__main__":
