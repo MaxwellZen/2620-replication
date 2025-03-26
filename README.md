@@ -26,6 +26,8 @@ At the beginning, the server must:
 - If no servers: current server is the leader, read from users{k}.json or start empty
 - Otherwise: sign in with other servers via "server_login" command, use output to find leader
 
+Note that since this allows a new server to sign on at any point in time, this allows us to satisfy the extra credit requirement of adding new servers to the set of replicas -- it's possible to use this system to initialize arbitrarily many memory replicas.
+
 To facilitate this process, we have some new variables:
 - `server_sockets`: sockets connected to other servers (mainly for lead server to propagate changes to children)
 - `server_hosts`: host and port of each server being tracked
