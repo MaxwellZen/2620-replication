@@ -6,6 +6,7 @@ from fnmatch import fnmatch
 import sys
 import os
 import hashlib
+import time
 
 sel = selectors.DefaultSelector()
 self_host = None
@@ -24,13 +25,16 @@ is_leader = False
 def stable_hash(s):
     return hashlib.sha256(s.encode()).hexdigest()
 
-def send_request(sock, request):
+def send_request(sock, request, getdata = True):
     print("sending request", request)
     message = json.dumps(request).encode('utf-8')
     sock.sendall(message)
-    data = json.loads(sock.recv(1024).decode('utf-8'))
-    print("received:", data)
-    return data
+    if getdata:
+        data = json.loads(sock.recv(1024).decode('utf-8'))
+        print("received:", data)
+        return data
+    else:
+        return "sent"
 
 def create_account(username, data):
     """
@@ -143,9 +147,14 @@ def delete_account(data):
     """
     if not data.logged_in:
         return {"status": "error", "message": "not logged in"}
-    users.pop(data.username)
+    
+    user = data.username
+    users.pop(user)
     data.username = None
     data.logged_in = False
+
+    propagate_change({"command": "new_delete_acct", "username": user})
+
     return {"status": "success", "message": "account deleted"}
 
 def logout(data):
@@ -172,11 +181,13 @@ def ask_lead():
     """
     return {"status": "success", "leader": ("True" if is_leader else "False"), "lead_host": leader_host[0], "lead_port": leader_host[1]}
 
-def server_login(sock, host, port):
+def server_login(host, port):
     """
     Facilitates addition of new server
     """
     print(f"server login from {(host, port)}")
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.connect((host, port))
     server_sockets.append(sock)
     server_hosts.append((host, port))
     return {"status": "success", "leader": ("True" if is_leader else "False")}
@@ -237,28 +248,23 @@ def propagate_change(request):
 
     new_sockets = []
     new_hosts = []
-    for i in range(len(server_hosts)):
+    for i in range(len(server_sockets)):
         try:
-            name = server_hosts[i]
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.connect(name)
-            data = send_request(sock, {"command": "heart"})
-            # new_sockets.append(server_sockets[i])
+            sock = server_sockets[i]
+            send_request(sock, request, False)
+            new_sockets.append(server_sockets[i])
             new_hosts.append(server_hosts[i])
         except:
             continue 
-    # server_sockets = new_sockets 
-    server_hosts = new_hosts 
-    for name in server_hosts:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.connect(name)
-        data = send_request(sock, request)
 
-def handle_command(request, sock, data):
+    server_sockets = new_sockets 
+    server_hosts = new_hosts 
+
+def handle_command(request, data):
     """
     Handles incoming commands from the client.
     """
-    print(request)
+    print("request:", request)
     command = request.get("command")
 
     if not is_leader and command in ["create_account", "supply_pass", "login", "list_accounts", "send", "read", "delete_msg", "delete_account", "logout", "num_msg"]:
@@ -289,7 +295,7 @@ def handle_command(request, sock, data):
         case "ask_lead":
             return ask_lead()
         case "server_login":
-            return server_login(sock, request.get('host'), request.get('port'))
+            return server_login(request.get('host'), request.get('port'))
         case "full_update":
             return full_update()
         case "new_acct":
@@ -330,17 +336,22 @@ def service_connection(key, mask):
     data = key.data
 
     if mask & selectors.EVENT_READ:
-        recv_data = sock.recv(1024)
-        if recv_data:
-            data.outb += recv_data
-        else:
+        try:
+            recv_data = sock.recv(1024)
+            if recv_data:
+                data.outb += recv_data
+            else:
+                print(f"Closing connection to {data.addr}")
+                sel.unregister(sock)
+                sock.close()
+        except:
             print(f"Closing connection to {data.addr}")
             sel.unregister(sock)
             sock.close()
     if mask & selectors.EVENT_WRITE:
         if data.outb:
             request = json.loads(data.outb.decode("utf-8"))
-            response = handle_command(request, sock, data)
+            response = handle_command(request, data)
             print("response:", response)
             response = json.dumps(response).encode("utf-8")
             sent = sock.send(response)
@@ -403,6 +414,8 @@ def main():
 
     lsock.setblocking(False)
     sel.register(lsock, selectors.EVENT_READ, data=None)
+
+    last_check = 0
     try:
         while True:
             events = sel.select(timeout=1)
@@ -412,7 +425,8 @@ def main():
                 else:
                     service_connection(key, mask)
             
-            if not is_leader:
+            if not is_leader and time.time() - last_check > 1:
+                last_check = time.time()
                 try:
                     send_request(leader_socket, {"command": "marco"})
                 except:

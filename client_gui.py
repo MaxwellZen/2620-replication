@@ -39,6 +39,7 @@ class ChatApp:
         
         # general information about user
         self.username = None
+        self.password = None
         self.readmsg_start = 1
         self.num_msg = 0
         self.reading_msg = False
@@ -147,7 +148,7 @@ class ChatApp:
                     line_number = tb.tb_lineno
                     print("Line number:", line_number)
             print("waiting for server...")
-            time.sleep(5)
+            time.sleep(1)
     
     # wrapper for sending request and reconnecting if leader is disconnected
     def send_request(self, request):
@@ -159,6 +160,10 @@ class ChatApp:
                 return data
             except:
                 self.connect()
+                if self.username != None and self.password != None:
+                    message = json.dumps({"command": "login", "username": self.username, "password": self.password}).encode('utf-8')
+                    self.sock.sendall(message)
+                    data = json.loads(self.sock.recv(1024).decode('utf-8'))
 
     # sets up greeting page and kicks off main loop
     def main_loop(self):
@@ -447,6 +452,8 @@ class ChatApp:
             data = self.sock.recv(1024)
             data = data.decode("utf-8")
         if data == "SUCCESS: logged in":
+            self.username = self.username_entry.get()
+            self.password = self.password_entry.get()
             self.login_to_readmsg()
         elif data == "password is incorrect. please try again":
             self.reset_login()
@@ -531,6 +538,7 @@ class ChatApp:
             data = data.decode("utf-8")
 
         self.username = None 
+        self.password = None
         self.readmsg_start = 1
         self.num_msg = 0
         self.reading_msg = False 
@@ -551,6 +559,7 @@ class ChatApp:
             data = data.decode("utf-8")
 
         self.username = None 
+        self.password = None
         self.readmsg_start = 1
         self.num_msg = 0
         self.reading_msg = False 
